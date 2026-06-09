@@ -6,9 +6,10 @@
 1. [Prerequisites](#prerequisites)
 2. [Installation](#installation)
 3. [Configuration](#configuration)
-4. [Troubleshooting](#troubleshooting)
-5. [Testing](#testing)
-6. [Maintenance](#maintenance)
+4. [Creating and Managing WAF Policies](#creating-and-managing-waf-policies)
+5. [Troubleshooting](#troubleshooting)
+6. [Testing](#testing)
+7. [Maintenance](#maintenance)
 
 ---
 
@@ -366,46 +367,514 @@ sudo systemctl restart nginx
 sudo tail -f /var/log/nginx/error.log
 ```
 
-### Step 10: Test WAF Functionality
+---
+
+## Creating and Managing WAF Policies
+
+### Understanding WAF Policy Basics
+
+NGINX App Protect uses JSON files to define security policies. The WAF comes with two pre-built reference policies:
+
+| Policy | Description | Blocking Mode Path | Transparent Mode Path |
+|--------|-------------|-------------------|----------------------|
+| **Default** | OWASP Top 10 protection with minimal false positives | `/etc/app_protect/conf/NginxDefaultPolicy.json` | `/etc/app_protect/conf/NginxDefaultPolicy_transparent.json` |
+| **Strict** | More restrictive, higher security with possible false positives | `/etc/app_protect/conf/NginxStrictPolicy.json` | `/etc/app_protect/conf/NginxStrictPolicy_transparent.json` |
+
+### Step 1: Start with an Existing Policy
+
+The easiest way to create a custom policy is to copy and modify an existing one:
 
 ```bash
-# Create test script
-sudo tee /usr/local/bin/test-waf.sh > /dev/null << 'EOF'
+# Copy the default policy as your starting template
+sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/my-custom-policy.json
+
+# Set proper permissions
+sudo chown nginx:nginx /etc/app_protect/conf/my-custom-policy.json
+sudo chmod 644 /etc/app_protect/conf/my-custom-policy.json
+```
+
+### Step 2: Understand the Policy Structure
+
+A basic policy JSON looks like this:
+
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "applicationLanguage": "utf-8",
+        "enforcementMode": "blocking"
+    }
+}
+```
+
+**Key fields explained:**
+
+| Field | Description | Options |
+|-------|-------------|---------|
+| `name` | Unique identifier for your policy | Any string (no spaces recommended) |
+| `template` | Base security template | `POLICY_TEMPLATE_NGINX_BASE` |
+| `applicationLanguage` | Character encoding | `utf-8`, `iso-8859-1`, etc. |
+| `enforcementMode` | How the WAF responds | `blocking` (blocks attacks) or `transparent` (alarms only) |
+
+### Step 3: Customize Protection Features
+
+Here are the main security features you can configure:
+
+#### 1. **Enforcement by Violation Rating** (Default Behavior)
+By default, the policy blocks requests with a violation rating of 4-5 (threats):
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "applicationLanguage": "utf-8",
+        "enforcementMode": "blocking",
+        "blocking-settings": {
+            "violations": [
+                {
+                    "name": "VIOL_RATING_THREAT",
+                    "alarm": true,
+                    "block": true
+                }
+            ]
+        }
+    }
+}
+```
+
+#### 2. **Data Guard** (Mask Credit Cards & SSNs)
+Enable protection for sensitive data in responses:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "data-guard": {
+            "enabled": true,
+            "maskData": true,
+            "creditCardNumbers": true,
+            "usSocialSecurityNumbers": true
+        }
+    }
+}
+```
+
+#### 3. **Allow/Deny IP Lists**
+Restrict access by IP address:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "ip-address-lists": {
+            "ip-addresses": [
+                {
+                    "ipAddress": "192.168.1.0/24",
+                    "block": false
+                },
+                {
+                    "ipAddress": "10.0.0.5",
+                    "block": true
+                }
+            ]
+        }
+    }
+}
+```
+
+#### 4. **Allowed HTTP Methods**
+Restrict which HTTP methods are permitted:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "methods": {
+            "allowed-methods": [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE"
+            ]
+        }
+    }
+}
+```
+
+#### 5. **Request Size Limits**
+Block overly large requests:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "request-length": {
+            "max-length": 10240,
+            "check-length": true
+        }
+    }
+}
+```
+
+#### 6. **File Upload Restrictions**
+Control file uploads by type and size:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "file-upload-policy": {
+            "maximum-file-size": 1048576,
+            "allowed-extensions": [
+                "jpg", "jpeg", "png", "gif", "pdf", "txt"
+            ],
+            "disallowed-extensions": [
+                "exe", "bat", "sh", "php", "jsp"
+            ]
+        }
+    }
+}
+```
+
+#### 7. **Parameter Validation**
+Validate specific parameters in requests:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "parameters": [
+            {
+                "name": "email",
+                "type": "email",
+                "required": true,
+                "maxLength": 255,
+                "allowEmpty": false
+            },
+            {
+                "name": "age",
+                "type": "integer",
+                "minValue": 0,
+                "maxValue": 120
+            }
+        ]
+    }
+}
+```
+
+#### 8. **URL Protection**
+Define allowed URL patterns:
+```json
+{
+    "policy": {
+        "name": "my_custom_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "urls": [
+            {
+                "name": "homepage",
+                "method": "GET",
+                "protocol": "https",
+                "host": "www.example.com",
+                "path": "/",
+                "performStoring": true
+            },
+            {
+                "name": "login",
+                "method": "POST",
+                "path": "/login",
+                "performStoring": true,
+                "description": "Login endpoint"
+            }
+        ]
+    }
+}
+```
+
+### Step 4: Complete Policy Example
+
+Here's a comprehensive custom policy that combines multiple security features:
+
+```json
+{
+    "policy": {
+        "name": "production_waf_policy",
+        "description": "Production WAF policy with enhanced security",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "applicationLanguage": "utf-8",
+        "enforcementMode": "blocking",
+        
+        "blocking-settings": {
+            "violations": [
+                {
+                    "name": "VIOL_RATING_THREAT",
+                    "alarm": true,
+                    "block": true
+                },
+                {
+                    "name": "VIOL_RATING_NEED_EXAMINATION",
+                    "alarm": true,
+                    "block": false
+                },
+                {
+                    "name": "VIOR_JSON_MALFORMED",
+                    "alarm": true,
+                    "block": true
+                },
+                {
+                    "name": "VIOR_GRAPHQL_MALFORMED", 
+                    "alarm": true,
+                    "block": true
+                }
+            ]
+        },
+        
+        "data-guard": {
+            "enabled": true,
+            "maskData": true,
+            "creditCardNumbers": true,
+            "usSocialSecurityNumbers": true,
+            "usBankAccountNumbers": true
+        },
+        
+        "methods": {
+            "allowed-methods": [
+                "GET",
+                "POST",
+                "PUT",
+                "DELETE",
+                "HEAD",
+                "PATCH"
+            ]
+        },
+        
+        "request-length": {
+            "max-length": 10485760,
+            "check-length": true,
+            "check-url-length": true,
+            "check-header-length": true,
+            "check-query-length": true
+        },
+        
+        "file-upload-policy": {
+            "maximum-file-size": 5242880,
+            "maximum-uploads": 5,
+            "allowed-extensions": [
+                "jpg", "jpeg", "png", "gif", "pdf", "doc", "docx", "txt", "zip"
+            ],
+            "disallowed-extensions": [
+                "exe", "bat", "sh", "php", "jsp", "asp", "aspx", "cgi", "pl"
+            ]
+        },
+        
+        "ip-address-lists": {
+            "ip-addresses": [
+                {
+                    "ipAddress": "10.0.0.0/8",
+                    "block": false,
+                    "description": "Internal network"
+                },
+                {
+                    "ipAddress": "192.168.0.0/16", 
+                    "block": false,
+                    "description": "Corporate network"
+                }
+            ]
+        },
+        
+        "session-management": {
+            "sessionTracking": true,
+            "sessionExpiration": 3600,
+            "maxSessionsPerUser": 3
+        },
+        
+        "brute-force-protection": {
+            "loginAttempts": 5,
+            "blockTime": 300,
+            "trackingPeriod": 60
+        }
+    }
+}
+```
+
+### Step 5: Validate Your Policy
+
+Before using your custom policy, validate its JSON format:
+
+```bash
+# Install jq for JSON validation (if not installed)
+sudo apt install jq -y
+
+# Validate your policy file
+jq . /etc/app_protect/conf/my-custom-policy.json
+
+# Check if validation was successful
+echo $?  # Should return 0 if valid
+
+# Or use Python to validate
+python3 -m json.tool /etc/app_protect/conf/my-custom-policy.json
+
+# Use the App Protect JSON schema validator (if installed)
+sudo /opt/app_protect/bin/generate_json_schema.pl
+
+# Check for schema compliance
+cat /etc/app_protect/conf/my-custom-policy.json | \
+  python3 -c "import sys, json; json.load(sys.stdin); print('✅ JSON is valid')"
+```
+
+### Step 6: Apply the Policy to NGINX
+
+Edit your NGINX configuration to use the custom policy:
+
+```bash
+sudo nano /etc/nginx/conf.d/default.conf
+```
+
+Add the policy file path in your server or location block:
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name www.nginxlababdo.com;
+
+    ssl_certificate /etc/ssl/certs/nginx-selfsigned.crt;
+    ssl_certificate_key /etc/ssl/private/nginx-selfsigned.key;
+
+    # Apply your custom policy
+    app_protect_enable on;
+    app_protect_policy_file "/etc/app_protect/conf/my-custom-policy.json";
+    app_protect_security_log_enable on;
+    app_protect_security_log "/etc/app_protect/conf/log_default.json" syslog:server=127.0.0.1:515;
+
+    location / {
+        proxy_pass http://your-backend:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+### Step 7: Test Your Custom Policy
+
+```bash
+# Test the configuration
+sudo nginx -t
+
+# If test passes, reload NGINX
+sudo nginx -s reload
+
+# Check for any policy compilation errors
+sudo tail -f /var/log/nginx/error.log | grep -i "policy\|app_protect"
+
+# Test your policy with various attack patterns
+curl -k "https://localhost/?id=1' OR '1'='1"  # SQL Injection
+curl -k "https://localhost/?search=<script>alert(1)</script>"  # XSS
+curl -k "https://localhost/../../../etc/passwd"  # Path Traversal
+```
+
+### Step 8: Advanced Policy Management
+
+#### Create Policy Templates for Different Environments
+
+```bash
+# Create different policies for different environments
+sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/dev-policy.json
+sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/staging-policy.json
+sudo cp /etc/app_protect/conf/NginxStrictPolicy.json /etc/app_protect/conf/production-policy.json
+
+# Customize each environment
+# Dev: transparent mode with logging
+sudo sed -i 's/"enforcementMode": "blocking"/"enforcementMode": "transparent"/g' /etc/app_protect/conf/dev-policy.json
+
+# Staging: blocking with specific IP whitelist
+sudo sed -i '/"enforcementMode"/a \    "ip-address-lists": {"ip-addresses": [{"ipAddress": "YOUR_IP/32","block": false}]},' /etc/app_protect/conf/staging-policy.json
+```
+
+#### Rotate Policies Dynamically
+
+```bash
+# Create symbolic links for active policy
+sudo ln -sf /etc/app_protect/conf/production-policy.json /etc/app_protect/conf/active-policy.json
+
+# Update nginx.conf to use active-policy.json
+sudo sed -i 's|app_protect_policy_file "/etc/app_protect/conf/.*"|app_protect_policy_file "/etc/app_protect/conf/active-policy.json"|g' /etc/nginx/conf.d/default.conf
+
+# Reload to apply new policy
+sudo nginx -s reload
+```
+
+#### Monitor Policy Effectiveness
+
+```bash
+# Create monitoring script for policy violations
+sudo tee /usr/local/bin/policy-monitor.sh > /dev/null << 'EOF'
 #!/bin/bash
 
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+echo "Policy Violation Report - $(date)"
+echo "================================"
 
-echo -e "${YELLOW}Testing WAF Protection${NC}"
-echo "========================"
+# Count blocked requests by violation type
+if [ -f /var/log/app_protect/bd-socket-plugin.log ]; then
+    echo -e "\nTop Violations:"
+    grep -i "violation" /var/log/app_protect/bd-socket-plugin.log | \
+        tail -1000 | cut -d'"' -f4 | sort | uniq -c | sort -rn | head -10
+fi
 
-# Test 1: Normal request
-echo -e "\n${GREEN}1. Normal Request:${NC}"
-curl -s -k https://localhost/ | head -n 5
+# Check policy compilation status
+echo -e "\nPolicy Status:"
+sudo nginx -t 2>&1 | grep -i "policy\|app_protect"
 
-# Test 2: SQL Injection
-echo -e "\n${RED}2. SQL Injection Attempt (Should be blocked):${NC}"
-curl -s -k "https://localhost/?id=1' OR '1'='1"
+# Show active policy
+echo -e "\nActive Policy:"
+grep "app_protect_policy_file" /etc/nginx/conf.d/default.conf
 
-# Test 3: XSS Attack
-echo -e "\n${RED}3. XSS Attack Attempt (Should be blocked):${NC}"
-curl -s -k "https://localhost/?search=<script>alert('XSS')</script>"
-
-# Test 4: Path Traversal
-echo -e "\n${RED}4. Path Traversal Attempt (Should be blocked):${NC}"
-curl -s -k "https://localhost/../../../etc/passwd"
-
-echo -e "\n${YELLOW}Check WAF logs:${NC}"
-echo "sudo tail -f /var/log/app_protect/bd-socket-plugin.log"
+# Show enforcement mode
+echo -e "\nEnforcement Mode:"
+grep "enforcementMode" /etc/app_protect/conf/active-policy.json 2>/dev/null
 EOF
 
-sudo chmod +x /usr/local/bin/test-waf.sh
-
-# Run the test
-sudo /usr/local/bin/test-waf.sh
+sudo chmod +x /usr/local/bin/policy-monitor.sh
+sudo /usr/local/bin/policy-monitor.sh
 ```
+
+### Quick Policy Commands Reference
+
+| Task | Command |
+|------|---------|
+| List available policies | `ls -la /etc/app_protect/conf/*.json` |
+| Copy default policy | `sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/mypolicy.json` |
+| Validate JSON | `jq . /etc/app_protect/conf/mypolicy.json` |
+| Apply policy in NGINX | `app_protect_policy_file "/path/to/policy.json";` |
+| Switch to transparent mode | `sed -i 's/blocking/transparent/g' policy.json` |
+| Test configuration | `nginx -t` |
+| Reload WAF | `nginx -s reload` |
+| View policy errors | `tail -f /var/log/nginx/error.log \| grep policy` |
+| Check active policy | `grep app_protect_policy_file /etc/nginx/conf.d/*.conf` |
+
+### Best Practices for Policy Management
+
+1. **Start in transparent mode** - Set `enforcementMode: "transparent"` initially to monitor without blocking
+2. **Test before production** - Validate policies in a staging environment first
+3. **Keep backups** - Save working policy versions before making changes
+4. **Monitor logs** - Watch `/var/log/app_protect/bd-socket-plugin.log` for errors
+5. **Use version control** - Track policy changes in Git
+6. **Document customizations** - Comment any changes made to policies
+7. **Regular reviews** - Review policy effectiveness monthly
+8. **Update attack signatures** - Keep attack signatures current for maximum protection
+9. **Test with real traffic** - Use traffic replay tools to test policies before deployment
+10. **Create environment-specific policies** - Different policies for dev, staging, and production
+
+### Troubleshooting Policies
+
+| Issue | Solution |
+|-------|----------|
+| Policy not compiling | Check JSON syntax: `jq . policy.json` |
+| Module not loading | Verify module path in nginx.conf |
+| Too many false positives | Switch to transparent mode first, then adjust |
+| Attacks not blocked | Check enforcementMode is "blocking" |
+| Performance issues | Reduce logging, optimize rules |
+| Policy file not found | Verify path and permissions |
+| Compilation timeout | Check policy size and complexity |
 
 ---
 
@@ -470,13 +939,16 @@ sudo systemctl enable bd-socket-plugin
 sudo systemctl start bd-socket-plugin
 ```
 
-#### Issue 4: Policy file not found
+#### Issue 4: Policy file not found or invalid
 ```bash
 # Check if policy exists
 ls -la /etc/app_protect/conf/
 
 # If missing, reinstall
 sudo apt install --reinstall app-protect-common
+
+# Validate JSON syntax
+python3 -m json.tool /etc/app_protect/conf/your-policy.json
 
 # Or download default policy
 sudo cp /opt/app-protect/examples/NginxDefaultPolicy.json /etc/app_protect/conf/
@@ -500,6 +972,9 @@ ldd /usr/lib/nginx/modules/ngx_http_app_protect_module*.so
 
 # Check App Protect version
 dpkg -l | grep app-protect
+
+# Check policy compilation status in real-time
+sudo journalctl -u nginx -f | grep -i "app_protect\|policy"
 ```
 
 ---
@@ -527,7 +1002,11 @@ tests=(
     "XSS Attack|/?search=<script>alert(1)</script>"
     "Path Traversal|/../../../etc/passwd"
     "Command Injection|/?cmd=cat%20/etc/passwd"
-    "XXE Attack|/?xml=<!DOCTYPE%20foo%20[<!ENTITY%20xxe%20SYSTEM%20\"file:///etc/passwd\">]>"
+    "XXE Attack|/?xml=<!DOCTYPE%20foo[<!ENTITY%20xxe%20SYSTEM%20\"file:///etc/passwd\">]>"
+    "HTTP Method Tampering|/?_method=DELETE"
+    "Response Splitting|/%0d%0aHeader:%20Injected"
+    "LDAP Injection|/?user=*)(uid=*"
+    "NoSQL Injection|/?search[$ne]=1"
 )
 
 for test in "${tests[@]}"; do
@@ -545,6 +1024,7 @@ for test in "${tests[@]}"; do
 done
 
 echo -e "\n${YELLOW}Check WAF logs for detailed information${NC}"
+echo "sudo tail -f /var/log/app_protect/bd-socket-plugin.log"
 EOF
 
 sudo chmod +x /usr/local/bin/waf-attack-test.sh
@@ -562,6 +1042,10 @@ ab -n 1000 -c 10 -k https://localhost/
 
 # Test with attack patterns
 ab -n 100 -c 5 -k "https://localhost/?id=1' OR '1'='1"
+
+# Test with WAF enabled vs disabled
+echo "WAF Performance Impact Test"
+time curl -s -k https://localhost/ > /dev/null
 ```
 
 ---
@@ -573,11 +1057,14 @@ ab -n 100 -c 5 -k "https://localhost/?id=1' OR '1'='1"
 ```bash
 # Update attack signatures
 sudo apt update
-sudo apt upgrade app-protect-attack-signatures
+sudo apt upgrade app-protect-attack-signatures app-protect-bot-signatures
 
 # Update App Protect
 sudo apt update
 sudo apt upgrade app-protect app-protect-common
+
+# Update NGINX Plus
+sudo apt upgrade nginx-plus
 
 # Reload NGINX after updates
 sudo nginx -s reload
@@ -611,7 +1098,10 @@ EOF
 sudo tee /usr/local/bin/waf-monitor.sh > /dev/null << 'EOF'
 #!/bin/bash
 
-# Check WAF status
+echo "WAF Status Report - $(date)"
+echo "==========================="
+
+# Check WAF plugin
 if ps aux | grep -v grep | grep bd-socket-plugin > /dev/null; then
     echo "✅ WAF Plugin: Running"
 else
@@ -625,19 +1115,30 @@ else
     echo "❌ NGINX: Not Running"
 fi
 
+# Check active policy
+echo -e "\nActive Policy:"
+grep "app_protect_policy_file" /etc/nginx/conf.d/*.conf 2>/dev/null | head -1
+
 # Check recent attacks
 echo -e "\nRecent attacks (last 24 hours):"
-grep -i "attack" /var/log/app_protect/bd-socket-plugin.log 2>/dev/null | tail -5
+sudo grep -i "attack\|violation\|blocked" /var/log/app_protect/bd-socket-plugin.log 2>/dev/null | tail -5
 
-# Check WAF blocks
+# Count blocks today
 echo -e "\nWAF blocks today:"
-grep -c "blocked" /var/log/app_protect/bd-socket-plugin.log 2>/dev/null || echo "0"
+sudo grep -c "blocked" /var/log/app_protect/bd-socket-plugin.log 2>/dev/null || echo "0"
+
+# Check policy compilation
+echo -e "\nPolicy Status:"
+sudo nginx -t 2>&1 | grep -i "policy\|app_protect" || echo "✅ Policy OK"
 EOF
 
 sudo chmod +x /usr/local/bin/waf-monitor.sh
 
 # Run monitor
 sudo /usr/local/bin/waf-monitor.sh
+
+# Add to crontab for regular monitoring
+echo "0 * * * * /usr/local/bin/waf-monitor.sh >> /var/log/waf-monitor.log 2>&1" | sudo crontab -
 ```
 
 ### Backup Configuration
@@ -653,18 +1154,28 @@ mkdir -p $BACKUP_DIR
 cp -r /etc/nginx $BACKUP_DIR/
 cp -r /etc/app_protect $BACKUP_DIR/
 
-# Backup logs
-cp -r /var/log/nginx $BACKUP_DIR/
-cp -r /var/log/app_protect $BACKUP_DIR/
+# Backup logs (last 7 days)
+mkdir -p $BACKUP_DIR/logs
+cp /var/log/nginx/access.log $BACKUP_DIR/logs/
+cp /var/log/nginx/error.log $BACKUP_DIR/logs/
+cp /var/log/app_protect/bd-socket-plugin.log $BACKUP_DIR/logs/
+
+# Backup policy files specifically
+cp /etc/app_protect/conf/*.json $BACKUP_DIR/policies/ 2>/dev/null
 
 # Compress backup
 tar -czf ${BACKUP_DIR}.tar.gz $BACKUP_DIR/
 rm -rf $BACKUP_DIR
 
 echo "Backup saved to: ${BACKUP_DIR}.tar.gz"
+echo "Size: $(du -h ${BACKUP_DIR}.tar.gz | cut -f1)"
 EOF
 
 sudo chmod +x /usr/local/bin/backup-waf-config.sh
+sudo /usr/local/bin/backup-waf-config.sh
+
+# Schedule daily backups
+echo "0 2 * * * /usr/local/bin/backup-waf-config.sh" | sudo crontab -
 ```
 
 ---
@@ -676,18 +1187,44 @@ sudo chmod +x /usr/local/bin/backup-waf-config.sh
 # Use Let's Encrypt for production SSL
 sudo apt install certbot python3-certbot-nginx -y
 sudo certbot --nginx -d yourdomain.com
+
+# Or use strong SSL configuration
+sudo tee /etc/nginx/conf.d/ssl-params.conf > /dev/null << 'EOF'
+ssl_session_timeout 1d;
+ssl_session_cache shared:SSL:50m;
+ssl_session_tickets off;
+ssl_protocols TLSv1.2 TLSv1.3;
+ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+ssl_prefer_server_ciphers off;
+ssl_stapling on;
+ssl_stapling_verify on;
+EOF
 ```
 
-### 2. Custom WAF Policy
+### 2. Custom WAF Policy for Production
 ```bash
-# Copy default policy for customization
-sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/custom-policy.json
-
-# Edit custom policy
-sudo nano /etc/app_protect/conf/custom-policy.json
-
-# Update nginx.conf to use custom policy
-sudo sed -i 's/NginxDefaultPolicy.json/custom-policy.json/g' /etc/nginx/nginx.conf
+# Create production policy with enhanced security
+sudo tee /etc/app_protect/conf/production-policy.json > /dev/null << 'EOF'
+{
+    "policy": {
+        "name": "production_strict_policy",
+        "template": { "name": "POLICY_TEMPLATE_NGINX_BASE" },
+        "enforcementMode": "blocking",
+        "blocking-settings": {
+            "violations": [
+                {"name": "VIOL_RATING_THREAT", "alarm": true, "block": true},
+                {"name": "VIOL_ATTACK_SIGNATURE", "alarm": true, "block": true},
+                {"name": "VIOR_JSON_MALFORMED", "alarm": true, "block": true}
+            ]
+        },
+        "brute-force-protection": {
+            "loginAttempts": 5,
+            "blockTime": 900,
+            "trackingPeriod": 60
+        }
+    }
+}
+EOF
 ```
 
 ### 3. Rate Limiting with WAF
@@ -703,6 +1240,43 @@ EOF
 sudo sed -i '/app_protect_enable on;/a \    limit_req zone=waf_limit burst=20 nodelay;\n    limit_conn conn_limit 10;' /etc/nginx/conf.d/default.conf
 ```
 
+### 4. GeoIP Blocking (Optional)
+```bash
+# Install GeoIP module
+sudo apt install nginx-plus-module-geoip2
+
+# Add to nginx.conf
+echo "load_module modules/ngx_http_geoip2_module.so;" | sudo tee -a /etc/nginx/nginx.conf
+
+# Configure GeoIP blocking
+sudo tee -a /etc/nginx/conf.d/geoip.conf > /dev/null << 'EOF'
+geoip2 /etc/nginx/geoip/GeoLite2-Country.mmdb {
+    $geoip2_data_country_code country iso_code;
+}
+
+map $geoip2_data_country_code $allowed_country {
+    default 0;
+    US 1;
+    CA 1;
+    GB 1;
+}
+EOF
+```
+
+### 5. Security Headers Enhancement
+```bash
+# Add comprehensive security headers
+sudo tee -a /etc/nginx/conf.d/security-headers.conf > /dev/null << 'EOF'
+add_header X-Frame-Options "SAMEORIGIN" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline';" always;
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload" always;
+add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+EOF
+```
+
 ---
 
 ## Verification Checklist
@@ -716,7 +1290,12 @@ sudo sed -i '/app_protect_enable on;/a \    limit_req zone=waf_limit burst=20 no
 - [ ] Attack signatures updated
 - [ ] SSL certificates configured
 - [ ] WAF blocks malicious requests
+- [ ] Custom policy created and applied
 - [ ] Logs showing WAF activity
+- [ ] Performance testing completed
+- [ ] Backups configured
+- [ ] Monitoring in place
+- [ ] Security headers enabled
 
 ---
 
@@ -726,6 +1305,8 @@ sudo sed -i '/app_protect_enable on;/a \    limit_req zone=waf_limit burst=20 no
 - [F5 Support Portal](https://support.f5.com/)
 - [OWASP Top 10](https://owasp.org/www-project-top-ten/)
 - [NGINX Plus Admin Guide](https://docs.nginx.com/nginx/admin-guide/)
+- [NGINX App Protect Policy Reference](https://docs.nginx.com/nginx-app-protect/configuration/)
+- [F5 DevCentral Community](https://devcentral.f5.com/)
 
 ---
 
@@ -747,17 +1328,24 @@ ps aux | grep nginx
 sudo tail -f /var/log/nginx/error.log
 sudo tail -f /var/log/app_protect/bd-socket-plugin.log
 
+# Policy Management
+ls /etc/app_protect/conf/*.json
+sudo cp /etc/app_protect/conf/NginxDefaultPolicy.json /etc/app_protect/conf/mycustom.json
+jq . /etc/app_protect/conf/mycustom.json
+sudo nginx -s reload
+
 # Update Signatures
 sudo apt update && sudo apt upgrade app-protect-attack-signatures
 
 # Test WAF
 curl -k "https://localhost/?id=1' OR '1'='1"
 curl -k "https://localhost/?search=<script>alert(1)</script>"
+
+# Monitor
+sudo /usr/local/bin/waf-monitor.sh
+sudo journalctl -u nginx -f
 ```
 
 ---
 
-**Note**: This configuration is for educational and testing purposes. For production environments, ensure proper SSL certificates, custom WAF policies, and security hardening based on your specific requirements.
-```
-
-This comprehensive README covers everything from initial installation to production deployment, including troubleshooting common issues and maintaining the WAF configuration.
+**Note**: This configuration is for educational and testing purposes. For production environments, ensure proper SSL certificates from trusted CAs, custom WAF policies tailored to your application, regular security audits, and compliance with relevant security standards (PCI-DSS, HIPAA, GDPR, etc.). Always test policy changes in a staging environment before deploying to production.
