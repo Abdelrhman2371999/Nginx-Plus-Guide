@@ -1345,7 +1345,3 @@ curl -k "https://localhost/?search=<script>alert(1)</script>"
 sudo /usr/local/bin/waf-monitor.sh
 sudo journalctl -u nginx -f
 ```
-
----
-
-**Note**: This configuration is for educational and testing purposes. For production environments, ensure proper SSL certificates from trusted CAs, custom WAF policies tailored to your application, regular security audits, and compliance with relevant security standards (PCI-DSS, HIPAA, GDPR, etc.). Always test policy changes in a staging environment before deploying to production.
