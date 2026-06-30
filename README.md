@@ -1,4 +1,4 @@
-# NGINX Complete Guide - Master README
+# NGINX Complete Guide
 
 ## 📚 Overview
 
